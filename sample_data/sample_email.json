@@ -1,0 +1,8 @@
+{
+  "message_id": "sample-001@gmail.com",
+  "subject": "Meeting Recap: Q2 Planning Sync — May 9, 2026",
+  "sender": "shubham.gaur@onixnet.com",
+  "recipients": ["team@onixnet.com", "matteo@airbyte.io"],
+  "received_at": "2026-05-09T18:00:00Z",
+  "body_text": "Hi team,\n\nHere are the recap notes from today's Q2 planning sync.\n\nAttendees: Shubham Gaur (shubham.gaur@onixnet.com, organizer), Matteo Russo (matteo@airbyte.io, attendee)\n\nSummary:\nWe discussed the roadmap for Q2 and aligned on the key deliverables for the Airbyte integration demo.\n\nTopics discussed:\n- Airbyte Cloud connector setup\n- Memgraph graph schema\n- Demo day preparation\n\nDecisions:\n- We decided to use Neon Postgres as the staging destination\n- Agreed to target June 15 as the demo date\n\nAction items:\n- Action: Shubham to set up 4 Airbyte connectors by May 16. Owner: shubham.gaur@onixnet.com. Due: 2026-05-16. Priority: high\n- Action: Matteo to share Airbyte webhook documentation. Owner: matteo@airbyte.io. Due: 2026-05-12. Priority: high\n\nNext steps: Follow up in 1 week.\n\nBest,\nShubham"
+}

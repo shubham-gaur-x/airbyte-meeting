@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: meeting-memory-graph
+    runtime: python
+    buildCommand: pip install -r transform_service/requirements.txt
+    startCommand: cd transform_service && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MEMGRAPH_HOST
+        sync: false
+      - key: MEMGRAPH_PORT
+        sync: false
+      - key: MEMGRAPH_USER
+        sync: false
+      - key: MEMGRAPH_PASSWORD
+        sync: false
+      - key: JIRA_ENABLED
+        sync: false
+      - key: JIRA_DOMAIN
+        sync: false
+      - key: JIRA_EMAIL
+        sync: false
+      - key: JIRA_API_TOKEN
+        sync: false
+      - key: JIRA_PROJECT_KEY
+        sync: false
+      - key: JIRA_BOARD_ID
+        sync: false
+      - key: JIRA_ISSUE_TYPE
+        sync: false
+      - key: AIRBYTE_WEBHOOK_SECRET
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

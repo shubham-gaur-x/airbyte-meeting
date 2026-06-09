@@ -1,0 +1,237 @@
+"""FastAPI transform service — webhook receiver, graph query layer, background workers."""
+
+from __future__ import annotations
+
+import os
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Optional
+
+import httpx
+import structlog
+from fastapi import BackgroundTasks, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+
+import classifier
+import db
+import extractor
+import graph_builder
+import jira_pusher
+import memgraph_client
+from extractor import LowConfidenceError
+from models import AirbyteWebhookPayload
+
+log = structlog.get_logger()
+
+JIRA_ENABLED = os.environ.get("JIRA_ENABLED", "false").lower() == "true"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.create_staging_tables()
+    memgraph_client.create_indexes()
+    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    log.info(
+        "service.ready",
+        ollama_url=ollama_url[:30] + "…" if len(ollama_url) > 30 else ollama_url,
+        memgraph_host=os.environ.get("MEMGRAPH_HOST", "not-set"),
+        jira_enabled=JIRA_ENABLED,
+    )
+    yield
+
+
+app = FastAPI(title="meeting-memory-graph", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next) -> Response:
+    t0 = time.monotonic()
+    response = await call_next(request)
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    log.info(
+        "http.request",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    return response
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.post("/webhook/airbyte")
+async def airbyte_webhook(payload: AirbyteWebhookPayload, background_tasks: BackgroundTasks):
+    if payload.status != "succeeded":
+        log.info("webhook.ignored", status=payload.status)
+        return {"status": "ignored", "reason": payload.status}
+    background_tasks.add_task(process_new_emails)
+    background_tasks.add_task(process_new_events)
+    log.info("webhook.queued", connection_id=payload.connection_id)
+    return {"status": "queued", "connection_id": payload.connection_id}
+
+
+@app.get("/health")
+async def health():
+    postgres_ok = False
+    memgraph_ok = False
+    ollama_ok = False
+    counts = {}
+
+    try:
+        db.get_stats()
+        postgres_ok = True
+    except Exception:
+        pass
+
+    try:
+        counts = memgraph_client.get_graph_counts()
+        memgraph_ok = True
+    except Exception:
+        pass
+
+    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{ollama_url}/api/tags")
+            ollama_ok = resp.status_code == 200
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "postgres": postgres_ok,
+        "memgraph": memgraph_ok,
+        "ollama": ollama_ok,
+        "counts": counts,
+    }
+
+
+@app.get("/graph/meetings/recent")
+async def recent_meetings(limit: int = 10):
+    return memgraph_client.get_recent_meetings(limit)
+
+
+@app.get("/graph/person/{email}")
+async def person_meetings(email: str):
+    return memgraph_client.get_person_meetings(email)
+
+
+@app.get("/graph/topic/{name}")
+async def topic_meetings(name: str):
+    return memgraph_client.get_topic_meetings(name)
+
+
+@app.get("/graph/actions/open")
+async def open_actions(assignee: Optional[str] = None):
+    return memgraph_client.get_open_action_items(assignee)
+
+
+@app.get("/graph/digest/weekly")
+async def weekly_digest():
+    data = memgraph_client.get_weekly_digest_data()
+    meetings = data.get("meetings", [])
+    decisions = data.get("decisions", [])
+    actions_created = data.get("actions_created", [])
+    actions_closed = data.get("actions_closed", [])
+    top_topics = data.get("top_topics", [])
+    return {
+        "period": "last 7 days",
+        "meetings_count": len(meetings),
+        "meetings": [m.get("m", m) for m in meetings],
+        "decisions_made": [d.get("d", d) for d in decisions],
+        "action_items_created": len(actions_created),
+        "action_items_completed": len(actions_closed),
+        "top_topics": [{"topic": t.get("name"), "mentions": t.get("freq")} for t in top_topics],
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
+# ── Background tasks ───────────────────────────────────────────────────────────
+
+async def process_new_emails() -> None:
+    emails = db.get_unprocessed_emails(limit=50)
+    processed = skipped = errors = 0
+
+    for email in emails:
+        try:
+            clf = classifier.classify(email)
+            if not clf.is_meeting or clf.is_invite:
+                db.mark_email_processed(email.message_id, success=True)
+                skipped += 1
+                continue
+
+            meeting = await extractor.extract(email)
+            build = await graph_builder.build_graph(meeting, email.message_id)
+
+            if JIRA_ENABLED:
+                await jira_pusher.push_action_items(
+                    meeting.action_items, meeting, email.message_id
+                )
+
+            db.mark_email_processed(email.message_id, success=True)
+            processed += 1
+
+        except LowConfidenceError as exc:
+            db.mark_email_processed(email.message_id, success=False, error_msg=str(exc))
+            skipped += 1
+        except Exception as exc:
+            log.error("process_emails.error", message_id=email.message_id, error=str(exc))
+            db.mark_email_processed(email.message_id, success=False, error_msg=str(exc))
+            errors += 1
+
+    log.info("process_emails.done", processed=processed, skipped=skipped, errors=errors)
+
+
+async def process_new_events() -> None:
+    events = db.get_unprocessed_events(limit=50)
+    processed = skipped = errors = 0
+
+    for event in events:
+        event_id = event.get("event_id", "")
+        try:
+            subject = event.get("title", "")
+            body = event.get("description", "")
+            clf = classifier.classify_text(subject, body)
+
+            if not clf.is_meeting or clf.is_invite:
+                db.mark_event_processed(event_id, success=True)
+                skipped += 1
+                continue
+
+            from datetime import datetime as dt
+            from models import RawEmail
+            synthetic = RawEmail(
+                id=event.get("id", 0),
+                message_id=event_id,
+                subject=subject,
+                sender=event.get("organizer", ""),
+                body_text=f"{body}\n\nAttendees: {event.get('attendees', [])}",
+                received_at=event.get("start_time") or dt.utcnow(),
+            )
+            meeting = await extractor.extract(synthetic)
+            await graph_builder.build_graph(meeting, event_id)
+
+            if JIRA_ENABLED:
+                await jira_pusher.push_action_items(meeting.action_items, meeting, event_id)
+
+            db.mark_event_processed(event_id, success=True)
+            processed += 1
+
+        except LowConfidenceError as exc:
+            db.mark_event_processed(event_id, success=False, error_msg=str(exc))
+            skipped += 1
+        except Exception as exc:
+            log.error("process_events.error", event_id=event_id, error=str(exc))
+            db.mark_event_processed(event_id, success=False, error_msg=str(exc))
+            errors += 1
+
+    log.info("process_events.done", processed=processed, skipped=skipped, errors=errors)

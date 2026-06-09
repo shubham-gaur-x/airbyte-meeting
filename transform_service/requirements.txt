@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic[email]
+psycopg2-binary
+neo4j
+structlog
+python-dotenv
+tqdm
+python-slugify
+python-multipart

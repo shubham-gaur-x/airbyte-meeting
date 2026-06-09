@@ -1,0 +1,46 @@
+# Airbyte connections config — documentation only (not executable)
+
+destination:
+  name: meeting-memory-staging
+  type: PostgreSQL
+  ssl: require
+  schema: public
+
+connections:
+  - name: gmail-to-neon
+    source: Gmail
+    destination: meeting-memory-staging
+    streams: [messages, threads]
+    sync_mode: incremental_append_dedup
+    frequency: 15min
+    stream_prefix: raw_gmail_
+    webhook: true
+
+  - name: gcal-to-neon
+    source: Google Calendar
+    destination: meeting-memory-staging
+    streams: [events, calendars]
+    sync_mode: incremental_append_dedup
+    frequency: 15min
+    stream_prefix: raw_gcal_
+    webhook: true
+
+  - name: slack-to-neon
+    source: Slack
+    destination: meeting-memory-staging
+    streams: [messages, channels, users]
+    sync_mode: incremental_append_dedup
+    frequency: 15min
+    stream_prefix: raw_slack_
+    channel_filter: meeting-channels-only
+    webhook: true
+
+  - name: jira-to-neon
+    source: Jira
+    destination: meeting-memory-staging
+    streams: [issues, sprints, projects]
+    sync_mode: incremental_append_dedup
+    frequency: 15min
+    stream_prefix: raw_jira_
+    domain: shubhamgaur1.atlassian.net
+    webhook: true
