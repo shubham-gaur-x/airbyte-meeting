@@ -10,6 +10,7 @@ from typing import Optional
 
 import httpx
 import structlog
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -27,18 +28,27 @@ log = structlog.get_logger()
 JIRA_ENABLED = os.environ.get("JIRA_ENABLED", "false").lower() == "true"
 
 
+POLL_INTERVAL_MINUTES = int(os.environ.get("POLL_INTERVAL_MINUTES", "15"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.create_staging_tables()
     memgraph_client.create_indexes()
-    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(process_new_emails, "interval", minutes=POLL_INTERVAL_MINUTES, id="poll_emails")
+    scheduler.add_job(process_new_events, "interval", minutes=POLL_INTERVAL_MINUTES, id="poll_events")
+    scheduler.start()
+
     log.info(
         "service.ready",
-        ollama_url=ollama_url[:30] + "…" if len(ollama_url) > 30 else ollama_url,
         memgraph_host=os.environ.get("MEMGRAPH_HOST", "not-set"),
         jira_enabled=JIRA_ENABLED,
+        poll_interval_minutes=POLL_INTERVAL_MINUTES,
     )
     yield
+    scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="meeting-memory-graph", lifespan=lifespan)
