@@ -9,4 +9,4 @@ python-dotenv
 tqdm
 python-slugify
 python-multipart
-apscheduler
+apscheduler>=3.10,<4.0
