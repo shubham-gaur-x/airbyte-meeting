@@ -304,7 +304,6 @@ def main() -> None:
 
     gmail_id   = create_source_gmail()
     gcal_id    = create_source_google_calendar()
-    slack_id   = create_source_slack()
     jira_id    = create_source_jira()
 
     print("\n[6/6] Creating connections...")
@@ -319,12 +318,6 @@ def main() -> None:
             {"name": "events", "syncMode": "incremental_append_dedup", "primaryKey": [["id"]], "cursorField": ["updated"]},
         ])
 
-    if slack_id:
-        create_connection("slack-to-neon", slack_id, dest_id, "raw_slack_", [
-            {"name": "messages", "syncMode": "incremental_append_dedup", "primaryKey": [["ts"]], "cursorField": ["ts"]},
-            {"name": "channels", "syncMode": "full_refresh_overwrite", "primaryKey": [["id"]]},
-        ])
-
     if jira_id:
         create_connection("jira-to-neon", jira_id, dest_id, "raw_jira_", [
             {"name": "issues", "syncMode": "incremental_append_dedup", "primaryKey": [["id"]], "cursorField": ["updated"]},
@@ -336,10 +329,9 @@ def main() -> None:
     print(f"  Destination : {dest_id}")
     print(f"  Gmail       : {gmail_id or 'skipped'}")
     print(f"  G. Calendar : {gcal_id or 'skipped'}")
-    print(f"  Slack       : {slack_id or 'skipped'}")
     print(f"  Jira        : {jira_id or 'skipped'}")
     print("=" * 55)
-    if not all([gmail_id, gcal_id, slack_id, jira_id]):
+    if not all([gmail_id, gcal_id, jira_id]):
         print("\nNOTE: Some sources were skipped — add their credentials to .env")
         print("      and re-run this script. It is idempotent — safe to run again.")
 
