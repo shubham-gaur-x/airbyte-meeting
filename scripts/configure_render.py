@@ -66,17 +66,17 @@ def get_service_id(name: str) -> str:
     sys.exit(1)
 
 
-def get_existing_env_vars(service_id: str) -> list[dict]:
+def get_existing_env_vars(service_id: str) -> dict:
     r = httpx.get(f"{BASE_URL}/services/{service_id}/env-vars",
                   headers=_headers(), timeout=15)
     r.raise_for_status()
-    return r.json()
+    # API returns [{"envVar": {"key": ..., "value": ...}, "cursor": ...}, ...]
+    return {item["envVar"]["key"]: item["envVar"]["value"] for item in r.json()}
 
 
 def push_env_vars(service_id: str) -> None:
     print("\n[2/3] Reading env vars from .env...")
-    existing = get_existing_env_vars(service_id)
-    existing_map = {e["key"]: e["value"] for e in existing}
+    existing_map = get_existing_env_vars(service_id)
 
     updates: list[dict] = []
     skipped: list[str] = []
