@@ -94,14 +94,34 @@ async def check_jira() -> bool:
         return False
 
 
+TOKEN_URL = "https://cloud.airbyte.com/auth/realms/_airbyte-application-clients/protocol/openid-connect/token"
+
+
+async def _get_airbyte_token() -> str:
+    client_id = os.environ.get("AIRBYTE_CLIENT_ID", "")
+    client_secret = os.environ.get("AIRBYTE_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return ""
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.post(TOKEN_URL, data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        })
+        if r.status_code == 200:
+            return r.json().get("access_token", "")
+    return ""
+
+
 async def check_airbyte() -> bool:
     print("\n── Airbyte Cloud ──")
-    key = os.environ.get("AIRBYTE_API_KEY", "")
     workspace = os.environ.get("AIRBYTE_WORKSPACE_ID", "")
-    if not key:
-        _p(False, "AIRBYTE_API_KEY", "not set — get from Airbyte Cloud → Settings → API Keys")
+    token = await _get_airbyte_token()
+    if not token:
+        _p(False, "Airbyte credentials", "AIRBYTE_CLIENT_ID / AIRBYTE_CLIENT_SECRET not set in .env")
         return False
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    _p(True, "Token obtained via client credentials")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as c:
             r_src = await c.get(f"https://api.airbyte.com/v1/sources?workspaceId={workspace}",

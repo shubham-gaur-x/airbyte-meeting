@@ -6,7 +6,8 @@ Usage:
     python scripts/setup_airbyte.py
 
 Required env vars (in .env):
-    AIRBYTE_API_KEY        — from Airbyte Cloud → Settings → API keys
+    AIRBYTE_CLIENT_ID      — from Airbyte Cloud → Settings → Applications → Client ID
+    AIRBYTE_CLIENT_SECRET  — Client Secret from the same page
     AIRBYTE_WORKSPACE_ID   — from the URL: cloud.airbyte.com/workspaces/<ID>/...
     DATABASE_URL           — Neon Postgres connection string
     WEBHOOK_BASE_URL       — public URL of the transform service (e.g. https://xyz.onrender.com)
@@ -29,15 +30,33 @@ from urllib.parse import urlparse
 import httpx
 
 BASE_URL = "https://api.airbyte.com/v1"
-SYNC_FREQUENCY_MINUTES = 60  # free tier limit — use 60 minimum
+TOKEN_URL = "https://cloud.airbyte.com/auth/realms/_airbyte-application-clients/protocol/openid-connect/token"
+
+_cached_token: str = ""
+
+
+def _get_token() -> str:
+    global _cached_token
+    if _cached_token:
+        return _cached_token
+    client_id = os.environ.get("AIRBYTE_CLIENT_ID", "")
+    client_secret = os.environ.get("AIRBYTE_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        print("ERROR: AIRBYTE_CLIENT_ID and AIRBYTE_CLIENT_SECRET must be set in .env")
+        print("  Get them from: Airbyte Cloud → Settings → Applications")
+        sys.exit(1)
+    r = httpx.post(TOKEN_URL, data={
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }, timeout=15)
+    r.raise_for_status()
+    _cached_token = r.json()["access_token"]
+    return _cached_token
 
 
 def _headers() -> dict:
-    key = os.environ.get("AIRBYTE_API_KEY", "")
-    if not key:
-        print("ERROR: AIRBYTE_API_KEY not set in .env")
-        sys.exit(1)
-    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {_get_token()}", "Content-Type": "application/json"}
 
 
 def _workspace() -> str:
