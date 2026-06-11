@@ -205,6 +205,20 @@ def create_source_jira() -> str:
 
 # ── Connections ────────────────────────────────────────────────────────────────
 
+def trigger_sync(connection_id: str) -> None:
+    if not connection_id:
+        return
+    r = httpx.request("POST", f"{BASE_URL}/jobs", headers=_headers(), timeout=15, json={
+        "connectionId": connection_id,
+        "jobType": "sync",
+    })
+    if r.status_code in (200, 201):
+        job_id = r.json().get("jobId", "")
+        print(f"  Sync triggered — job: {job_id}")
+    else:
+        print(f"  Sync trigger failed: {r.status_code} {r.text[:100]}")
+
+
 def create_connection(name: str, source_id: str, dest_id: str, prefix: str, streams: list[dict]) -> str:
     if not source_id or not dest_id:
         print(f"  SKIP {name}: missing source or destination ID")
@@ -264,32 +278,40 @@ def main() -> None:
     gcal_id  = create_source_google_calendar()
     jira_id  = create_source_jira()
 
-    print("\n[5/5] Creating connections...")
+    print("\n[5/5] Creating connections + triggering syncs...")
+
+    gmail_conn = gcal_conn = jira_conn = ""
 
     if gmail_id:
-        create_connection("gmail-to-neon", gmail_id, dest_id, "raw_gmail_", [
+        gmail_conn = create_connection("gmail-to-neon", gmail_id, dest_id, "raw_gmail_", [
             {"name": "messages", "syncMode": "incremental_append_dedup", "primaryKey": [["id"]], "cursorField": ["internalDate"]},
         ])
+        print("  Triggering Gmail sync...")
+        trigger_sync(gmail_conn)
 
     if gcal_id:
-        create_connection("gcal-to-neon", gcal_id, dest_id, "raw_gcal_", [
+        gcal_conn = create_connection("gcal-to-neon", gcal_id, dest_id, "raw_gcal_", [
             {"name": "events", "syncMode": "incremental_append_dedup", "primaryKey": [["id"]], "cursorField": ["updated"]},
         ])
+        print("  Triggering Google Calendar sync...")
+        trigger_sync(gcal_conn)
 
     if jira_id:
-        create_connection("jira-to-neon", jira_id, dest_id, "raw_jira_", [
+        jira_conn = create_connection("jira-to-neon", jira_id, dest_id, "raw_jira_", [
             {"name": "issues", "syncMode": "incremental_append_dedup", "primaryKey": [["id"]], "cursorField": ["updated"]},
             {"name": "sprints", "syncMode": "full_refresh_overwrite", "primaryKey": [["id"]]},
         ])
+        print("  Triggering Jira sync...")
+        trigger_sync(jira_conn)
 
     print("\n" + "=" * 55)
     print("  Done! Summary:")
     print(f"  Destination : {dest_id}")
-    print(f"  Gmail       : {gmail_id or 'skipped'}")
-    print(f"  G. Calendar : {gcal_id or 'skipped'}")
-    print(f"  Jira        : {jira_id or 'skipped'}")
+    print(f"  Gmail       : {gmail_id or 'skipped'} (conn: {gmail_conn or '-'})")
+    print(f"  G. Calendar : {gcal_id or 'skipped'} (conn: {gcal_conn or '-'})")
+    print(f"  Jira        : {jira_id or 'skipped'} (conn: {jira_conn or '-'})")
     print("=" * 55)
-    if not all([gmail_id, gcal_id, jira_id]):
+    if not all([gmail_id, gcal_id]):
         print("\nNOTE: Some sources were skipped — add credentials to .env and re-run.")
         print("      This script is idempotent — safe to run multiple times.")
 
