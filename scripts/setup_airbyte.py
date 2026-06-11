@@ -11,13 +11,10 @@ Required env vars (in .env):
     DATABASE_URL           — Neon Postgres connection string
     WEBHOOK_BASE_URL       — public URL of the transform service (e.g. https://xyz.onrender.com)
 
-    # Source credentials (fill in what you have, skip others):
+    # Source credentials:
     GOOGLE_CLIENT_ID       — OAuth2 client ID from Google Cloud Console
     GOOGLE_CLIENT_SECRET   — OAuth2 client secret from Google Cloud Console
     GOOGLE_REFRESH_TOKEN   — OAuth2 refresh token (run scripts/get_google_token.py)
-    SLACK_CLIENT_ID
-    SLACK_CLIENT_SECRET
-    SLACK_REFRESH_TOKEN
     JIRA_DOMAIN            — e.g. shubhamgaur1.atlassian.net
     JIRA_EMAIL
     JIRA_API_TOKEN
@@ -27,13 +24,12 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from urllib.parse import urlparse
 
 import httpx
 
 BASE_URL = "https://api.airbyte.com/v1"
-SYNC_FREQUENCY_MINUTES = 60  # how often to sync (minutes) — use 60 for free tier
+SYNC_FREQUENCY_MINUTES = 60  # free tier limit — use 60 minimum
 
 
 def _headers() -> dict:
@@ -53,7 +49,6 @@ def _workspace() -> str:
 
 
 def _parse_neon(database_url: str) -> dict:
-    """Parse DATABASE_URL into Airbyte Postgres destination fields."""
     p = urlparse(database_url)
     return {
         "host": p.hostname,
@@ -79,13 +74,12 @@ def api(method: str, path: str, **kwargs) -> dict:
 # ── Destination ────────────────────────────────────────────────────────────────
 
 def create_destination() -> str:
-    print("\n[1/6] Creating Neon Postgres destination...")
+    print("\n[1/5] Creating Neon Postgres destination...")
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         print("  SKIP: DATABASE_URL not set")
         return ""
 
-    # Check if already exists
     existing = api("GET", f"/destinations?workspaceId={_workspace()}")
     for d in existing.get("data", []):
         if d.get("name") == "meeting-memory-neon":
@@ -109,7 +103,7 @@ def create_destination() -> str:
 # ── Sources ────────────────────────────────────────────────────────────────────
 
 def create_source_gmail() -> str:
-    print("\n[2/6] Creating Gmail source...")
+    print("\n[2/5] Creating Gmail source...")
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
     refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
@@ -143,7 +137,7 @@ def create_source_gmail() -> str:
 
 
 def create_source_google_calendar() -> str:
-    print("\n[3/6] Creating Google Calendar source...")
+    print("\n[3/5] Creating Google Calendar source...")
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
     refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
@@ -176,44 +170,8 @@ def create_source_google_calendar() -> str:
     return source_id
 
 
-def create_source_slack() -> str:
-    print("\n[4/6] Creating Slack source...")
-    client_id = os.environ.get("SLACK_CLIENT_ID", "")
-    client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
-    refresh_token = os.environ.get("SLACK_REFRESH_TOKEN", "")
-    if not all([client_id, client_secret, refresh_token]):
-        print("  SKIP: SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_REFRESH_TOKEN not set")
-        return ""
-
-    existing = api("GET", f"/sources?workspaceId={_workspace()}")
-    for s in existing.get("data", []):
-        if s.get("name") == "slack-source":
-            print(f"  EXISTS: {s['sourceId']}")
-            return s["sourceId"]
-
-    result = api("POST", "/sources", json={
-        "workspaceId": _workspace(),
-        "name": "slack-source",
-        "definitionId": "c2281cee-86f9-4a86-bb48-d23286b4c7bd",  # Slack
-        "configuration": {
-            "sourceType": "slack",
-            "credentials": {
-                "auth_type": "OAuth",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-            },
-            "start_date": "2024-01-01T00:00:00Z",
-            "lookback_window": 7,
-        },
-    })
-    source_id = result.get("sourceId", "")
-    print(f"  OK: {source_id}")
-    return source_id
-
-
 def create_source_jira() -> str:
-    print("\n[5/6] Creating Jira source...")
+    print("\n[4/5] Creating Jira source...")
     domain = os.environ.get("JIRA_DOMAIN", "")
     email = os.environ.get("JIRA_EMAIL", "")
     token = os.environ.get("JIRA_API_TOKEN", "")
@@ -279,7 +237,7 @@ def create_connection(name: str, source_id: str, dest_id: str, prefix: str, stre
         "nonBreakingSchemaUpdatesBehavior": "propagate_columns",
         "schedule": {
             "scheduleType": "cron",
-            "cronExpression": "0 */1 * * *",  # every hour (free tier limit)
+            "cronExpression": "0 */1 * * *",  # every hour — free tier minimum
         },
         "configurations": {"streams": streams},
         "notifySchemaChanges": True,
@@ -302,11 +260,11 @@ def main() -> None:
         print("\nDestination creation failed — check DATABASE_URL and AIRBYTE_API_KEY")
         sys.exit(1)
 
-    gmail_id   = create_source_gmail()
-    gcal_id    = create_source_google_calendar()
-    jira_id    = create_source_jira()
+    gmail_id = create_source_gmail()
+    gcal_id  = create_source_google_calendar()
+    jira_id  = create_source_jira()
 
-    print("\n[6/6] Creating connections...")
+    print("\n[5/5] Creating connections...")
 
     if gmail_id:
         create_connection("gmail-to-neon", gmail_id, dest_id, "raw_gmail_", [
@@ -332,12 +290,11 @@ def main() -> None:
     print(f"  Jira        : {jira_id or 'skipped'}")
     print("=" * 55)
     if not all([gmail_id, gcal_id, jira_id]):
-        print("\nNOTE: Some sources were skipped — add their credentials to .env")
-        print("      and re-run this script. It is idempotent — safe to run again.")
+        print("\nNOTE: Some sources were skipped — add credentials to .env and re-run.")
+        print("      This script is idempotent — safe to run multiple times.")
 
 
 if __name__ == "__main__":
-    # Load .env if present
     env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
     if os.path.exists(env_path):
         with open(env_path) as f:

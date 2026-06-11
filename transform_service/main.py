@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import time
 from contextlib import asynccontextmanager
@@ -11,7 +13,7 @@ from typing import Optional
 import httpx
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import BackgroundTasks, FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 import classifier
@@ -79,7 +81,25 @@ async def log_requests(request: Request, call_next) -> Response:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post("/webhook/airbyte")
-async def airbyte_webhook(payload: AirbyteWebhookPayload, background_tasks: BackgroundTasks):
+async def airbyte_webhook(request: Request, background_tasks: BackgroundTasks):
+    secret = os.environ.get("AIRBYTE_WEBHOOK_SECRET", "").strip()
+    if secret:
+        sig = request.headers.get("X-Airbyte-Signature", "")
+        body = await request.body()
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            log.warning("webhook.invalid_signature")
+            raise HTTPException(status_code=401, detail="Invalid signature")
+    else:
+        body = await request.body()
+
+    import json
+    try:
+        data = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    payload = AirbyteWebhookPayload.model_validate(data)
     if payload.status != "succeeded":
         log.info("webhook.ignored", status=payload.status)
         return {"status": "ignored", "reason": payload.status}
@@ -93,7 +113,7 @@ async def airbyte_webhook(payload: AirbyteWebhookPayload, background_tasks: Back
 async def health():
     postgres_ok = False
     memgraph_ok = False
-    ollama_ok = False
+    llm_ok = False
     counts = {}
 
     try:
@@ -108,19 +128,34 @@ async def health():
     except Exception:
         pass
 
-    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{ollama_url}/api/tags")
-            ollama_ok = resp.status_code == 200
-    except Exception:
-        pass
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if groq_key:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://api.groq.com/openai/v1/models",
+                    headers={"Authorization": f"Bearer {groq_key}"},
+                )
+                llm_ok = resp.status_code == 200
+        except Exception:
+            pass
+        llm_backend = "groq"
+    else:
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{ollama_url}/api/tags")
+                llm_ok = resp.status_code == 200
+        except Exception:
+            pass
+        llm_backend = "ollama"
 
     return {
         "status": "ok",
         "postgres": postgres_ok,
         "memgraph": memgraph_ok,
-        "ollama": ollama_ok,
+        "llm": llm_ok,
+        "llm_backend": llm_backend,
         "counts": counts,
     }
 

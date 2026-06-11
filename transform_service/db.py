@@ -67,40 +67,6 @@ def create_staging_tables() -> None:
                     created_at       TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS raw_slack_messages (
-                    id               SERIAL PRIMARY KEY,
-                    ts               TEXT UNIQUE NOT NULL,
-                    channel_id       TEXT,
-                    channel_name     TEXT,
-                    user_id          TEXT,
-                    text             TEXT,
-                    thread_ts        TEXT,
-                    message_at       TIMESTAMPTZ,
-                    processed        BOOLEAN DEFAULT FALSE,
-                    processed_at     TIMESTAMPTZ,
-                    processing_error TEXT,
-                    created_at       TIMESTAMPTZ DEFAULT NOW()
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS raw_jira_issues (
-                    id               SERIAL PRIMARY KEY,
-                    issue_key        TEXT UNIQUE NOT NULL,
-                    summary          TEXT,
-                    description      TEXT,
-                    status           TEXT,
-                    assignee         TEXT,
-                    reporter         TEXT,
-                    labels           JSONB DEFAULT '[]',
-                    created_jira     TIMESTAMPTZ,
-                    updated_jira     TIMESTAMPTZ,
-                    processed        BOOLEAN DEFAULT FALSE,
-                    processed_at     TIMESTAMPTZ,
-                    processing_error TEXT,
-                    created_at       TIMESTAMPTZ DEFAULT NOW()
-                )
-            """)
         conn.commit()
         log.info("db.staging_tables_ready")
     finally:
