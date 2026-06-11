@@ -120,14 +120,13 @@ def create_source_gmail() -> str:
     result = api("POST", "/sources", json={
         "workspaceId": _workspace(),
         "name": "gmail-source",
-        "definitionId": "2de7a064-af05-4b6d-8bf3-f9f35e7d34da",  # Gmail
+        "definitionId": "f7833dac-fc18-4feb-a2a9-94b22001edc6",  # Gmail v0.1.3
         "configuration": {
-            "sourceType": "gmail",
             "credentials": {
                 "auth_type": "Client",
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "refresh_token": refresh_token,
+                "client_refresh_token": refresh_token,  # Gmail uses client_refresh_token
             },
         },
     })
@@ -154,15 +153,12 @@ def create_source_google_calendar() -> str:
     result = api("POST", "/sources", json={
         "workspaceId": _workspace(),
         "name": "gcal-source",
-        "definitionId": "71607ba1-c0ac-4799-8049-7f4b90dd50f7",  # Google Calendar
+        "definitionId": "c01b6259-bdf4-45ff-bcd5-66424cd2f18b",  # Google Calendar v0.0.41
         "configuration": {
-            "sourceType": "google-calendar",
-            "credentials": {
-                "auth_type": "Client",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-            },
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "client_refresh_token_2": refresh_token,  # GCal uses client_refresh_token_2
+            "calendarid": "primary",
         },
     })
     source_id = result.get("sourceId", "")
@@ -251,7 +247,7 @@ def create_connection(name: str, source_id: str, dest_id: str, prefix: str, stre
         "nonBreakingSchemaUpdatesBehavior": "propagate_columns",
         "schedule": {
             "scheduleType": "cron",
-            "cronExpression": "0 */1 * * *",  # every hour — free tier minimum
+            "cronExpression": "0 0 * ? * *",  # every hour — Quartz cron format
         },
         "configurations": {"streams": streams},
         "notifySchemaChanges": True,
