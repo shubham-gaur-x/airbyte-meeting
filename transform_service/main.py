@@ -270,6 +270,8 @@ async def process_new_events() -> None:
 
             from datetime import datetime as dt
             from models import RawEmail
+            subject = event.get("title") or ""
+            body = event.get("description") or ""
             synthetic = RawEmail(
                 id=event.get("id", 0),
                 message_id=event_id,
