@@ -236,6 +236,23 @@ async def process_new_emails() -> None:
     log.info("process_emails.done", processed=processed, skipped=skipped, errors=errors)
 
 
+_SKIP_TITLES = ("out of office", "ooo", "birthday", "holiday", "away", "vacation", "pto")
+
+
+def _is_calendar_meeting(event: dict) -> bool:
+    """Calendar-aware meeting check: Meet link or 2+ attendees = meeting."""
+    title = (event.get("title") or "").lower()
+    if any(kw in title for kw in _SKIP_TITLES):
+        return False
+    location = event.get("location") or ""
+    if "meet.google.com" in location or "zoom.us" in location or "teams.microsoft" in location:
+        return True
+    attendees = event.get("attendees") or []
+    if isinstance(attendees, list) and len(attendees) >= 2:
+        return True
+    return False
+
+
 async def process_new_events() -> None:
     imported = db.sync_airbyte_calendar_events()
     if imported:
@@ -246,11 +263,7 @@ async def process_new_events() -> None:
     for event in events:
         event_id = event.get("event_id", "")
         try:
-            subject = event.get("title", "")
-            body = event.get("description", "")
-            clf = classifier.classify_text(subject, body)
-
-            if not clf.is_meeting or clf.is_invite:
+            if not _is_calendar_meeting(event):
                 db.mark_event_processed(event_id, success=True)
                 skipped += 1
                 continue
