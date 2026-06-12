@@ -105,7 +105,7 @@ async def airbyte_webhook(request: Request, background_tasks: BackgroundTasks):
         return {"status": "ignored", "reason": payload.status}
     background_tasks.add_task(process_new_emails)
     background_tasks.add_task(process_new_events)
-    log.info("webhook.queued", connection_id=payload.connection_id)
+    log.info("webhook.queued", connection_id=payload.connection_id, source=payload.source if hasattr(payload, "source") else "?")
     return {"status": "queued", "connection_id": payload.connection_id}
 
 
@@ -237,6 +237,9 @@ async def process_new_emails() -> None:
 
 
 async def process_new_events() -> None:
+    imported = db.sync_airbyte_calendar_events()
+    if imported:
+        log.info("process_events.imported_from_airbyte", count=imported)
     events = db.get_unprocessed_events(limit=50)
     processed = skipped = errors = 0
 

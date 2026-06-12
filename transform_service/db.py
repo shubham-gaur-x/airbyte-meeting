@@ -148,6 +148,55 @@ def mark_event_processed(
 
 
 @with_retry(max_attempts=3, base_delay=2.0)
+def sync_airbyte_calendar_events() -> int:
+    """Import new rows from Airbyte's raw_gcal_events into raw_calendar_events.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING so it is safe to call repeatedly.
+    Returns the number of newly imported rows.
+    """
+    pool = get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO raw_calendar_events
+                    (event_id, title, description, organizer, attendees,
+                     start_time, end_time, location, created_at)
+                SELECT
+                    id,
+                    summary,
+                    description,
+                    organizer->>'email',
+                    COALESCE(attendees, '[]'::jsonb),
+                    CASE
+                        WHEN start->>'dateTime' IS NOT NULL
+                            THEN (start->>'dateTime')::timestamptz
+                        WHEN start->>'date' IS NOT NULL
+                            THEN (start->>'date')::date::timestamptz
+                        ELSE NULL
+                    END,
+                    CASE
+                        WHEN "end"->>'dateTime' IS NOT NULL
+                            THEN ("end"->>'dateTime')::timestamptz
+                        WHEN "end"->>'date' IS NOT NULL
+                            THEN ("end"->>'date')::date::timestamptz
+                        ELSE NULL
+                    END,
+                    COALESCE(location, "hangoutLink"),
+                    _airbyte_extracted_at
+                FROM raw_gcal_events
+                WHERE id IS NOT NULL
+                ON CONFLICT (event_id) DO NOTHING
+            """)
+            imported = cur.rowcount
+        conn.commit()
+        log.info("db.sync_airbyte_calendar_events", imported=imported)
+        return imported
+    finally:
+        pool.putconn(conn)
+
+
+@with_retry(max_attempts=3, base_delay=2.0)
 def get_stats() -> dict:
     pool = get_pool()
     conn = pool.getconn()
