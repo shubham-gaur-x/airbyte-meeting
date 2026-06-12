@@ -119,8 +119,8 @@ def trigger_deploy(service_id: str) -> str:
         timeout=15,
     )
     r.raise_for_status()
-    deploy_id = r.json().get("id", "")
-    print(f"  Deploy triggered: {deploy_id}")
+    deploy_id = r.json().get("id", "") if r.content else ""
+    print(f"  Deploy triggered: {deploy_id or '(queued)'}")
     return deploy_id
 
 
@@ -155,7 +155,13 @@ def main() -> None:
 
     push_env_vars(service_id)
     deploy_id = trigger_deploy(service_id)
-    wait_for_deploy(service_id, deploy_id)
+    if deploy_id:
+        wait_for_deploy(service_id, deploy_id)
+    else:
+        print("  Deploy queued — check https://dashboard.render.com for status.")
+        url = os.environ.get("WEBHOOK_BASE_URL", "")
+        if url:
+            print(f"  Service URL: {url}/health")
 
     service_url = os.environ.get("WEBHOOK_BASE_URL", "https://meeting-memory-graph.onrender.com")
     print(f"\n  Service live at: {service_url}/health")
