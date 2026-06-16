@@ -352,32 +352,34 @@ def get_open_action_items(assignee_email: Optional[str] = None) -> List[dict]:
 
 
 def get_weekly_digest_data(days: int = 30) -> dict:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     driver = get_driver()
     with driver.session() as session:
         meetings = session.execute_read(
             lambda tx: tx.run(
-                "MATCH (m:Meeting) WHERE m.date >= date() - duration({days:$days}) RETURN m",
-                days=days,
+                "MATCH (m:Meeting) WHERE m.date >= $cutoff RETURN m",
+                cutoff=cutoff,
             ).data()
         )
         decisions = session.execute_read(
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:PRODUCED]->(d:Decision)
-                WHERE m.date >= date() - duration({days:$days})
+                WHERE m.date >= $cutoff
                 RETURN d
                 """,
-                days=days,
+                cutoff=cutoff,
             ).data()
         )
         actions_created = session.execute_read(
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:PRODUCED]->(a:ActionItem)
-                WHERE m.date >= date() - duration({days:$days})
+                WHERE m.date >= $cutoff
                 RETURN a
                 """,
-                days=days,
+                cutoff=cutoff,
             ).data()
         )
         actions_closed = session.execute_read(
@@ -392,11 +394,11 @@ def get_weekly_digest_data(days: int = 30) -> dict:
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:DISCUSSED]->(t:Topic)
-                WHERE m.date >= date() - duration({days:$days})
+                WHERE m.date >= $cutoff
                 RETURN t.name as name, count(m) as freq
                 ORDER BY freq DESC LIMIT 5
                 """,
-                days=days,
+                cutoff=cutoff,
             ).data()
         )
     return {
