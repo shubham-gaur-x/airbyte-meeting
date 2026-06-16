@@ -351,30 +351,33 @@ def get_open_action_items(assignee_email: Optional[str] = None) -> List[dict]:
     return result
 
 
-def get_weekly_digest_data() -> dict:
+def get_weekly_digest_data(days: int = 30) -> dict:
     driver = get_driver()
     with driver.session() as session:
         meetings = session.execute_read(
             lambda tx: tx.run(
-                "MATCH (m:Meeting) WHERE m.date >= date() - duration({days:7}) RETURN m"
+                "MATCH (m:Meeting) WHERE m.date >= date() - duration({days:$days}) RETURN m",
+                days=days,
             ).data()
         )
         decisions = session.execute_read(
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:PRODUCED]->(d:Decision)
-                WHERE m.date >= date() - duration({days:7})
+                WHERE m.date >= date() - duration({days:$days})
                 RETURN d
-                """
+                """,
+                days=days,
             ).data()
         )
         actions_created = session.execute_read(
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:PRODUCED]->(a:ActionItem)
-                WHERE m.date >= date() - duration({days:7})
+                WHERE m.date >= date() - duration({days:$days})
                 RETURN a
-                """
+                """,
+                days=days,
             ).data()
         )
         actions_closed = session.execute_read(
@@ -389,10 +392,11 @@ def get_weekly_digest_data() -> dict:
             lambda tx: tx.run(
                 """
                 MATCH (m:Meeting)-[:DISCUSSED]->(t:Topic)
-                WHERE m.date >= date() - duration({days:7})
+                WHERE m.date >= date() - duration({days:$days})
                 RETURN t.name as name, count(m) as freq
                 ORDER BY freq DESC LIMIT 5
-                """
+                """,
+                days=days,
             ).data()
         )
     return {

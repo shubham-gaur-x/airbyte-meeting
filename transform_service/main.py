@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(process_new_emails, "interval", minutes=POLL_INTERVAL_MINUTES, id="poll_emails")
     scheduler.add_job(process_new_events, "interval", minutes=POLL_INTERVAL_MINUTES, id="poll_events")
+    # Run once immediately on startup to pick up any backlog
+    scheduler.add_job(process_new_events, "date", id="poll_events_startup")
     scheduler.start()
 
     log.info(
@@ -180,9 +182,18 @@ async def open_actions(assignee: Optional[str] = None):
     return memgraph_client.get_open_action_items(assignee)
 
 
+@app.post("/process")
+async def trigger_process():
+    """Manually trigger processing of unprocessed events (useful for demos)."""
+    await process_new_events()
+    await process_new_emails()
+    counts = memgraph_client.get_graph_counts()
+    return {"status": "done", "graph_counts": counts}
+
+
 @app.get("/graph/digest/weekly")
-async def weekly_digest():
-    data = memgraph_client.get_weekly_digest_data()
+async def weekly_digest(days: int = 30):
+    data = memgraph_client.get_weekly_digest_data(days=days)
     meetings = data.get("meetings", [])
     decisions = data.get("decisions", [])
     actions_created = data.get("actions_created", [])
@@ -244,8 +255,8 @@ def _is_calendar_meeting(event: dict) -> bool:
     title = (event.get("title") or "").lower()
     if any(kw in title for kw in _SKIP_TITLES):
         return False
-    location = event.get("location") or ""
-    if "meet.google.com" in location or "zoom.us" in location or "teams.microsoft" in location:
+    location = (event.get("location") or "").lower()
+    if any(kw in location for kw in ("meet.google.com", "zoom.us", "teams.microsoft", "microsoft teams", "webex", "gotomeeting")):
         return True
     attendees = event.get("attendees") or []
     if isinstance(attendees, list) and len(attendees) >= 2:
