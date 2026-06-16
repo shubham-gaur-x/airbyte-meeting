@@ -182,7 +182,8 @@ async def topic_meetings(name: str):
 
 @app.get("/graph/actions/open")
 async def open_actions(assignee: Optional[str] = None):
-    return memgraph_client.get_open_action_items(assignee)
+    rows = memgraph_client.get_open_action_items(assignee)
+    return [{"assignee": r.get("assignee"), **_node_props("a", [r])[0]} for r in rows]
 
 
 @app.post("/process")
