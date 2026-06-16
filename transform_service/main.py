@@ -164,17 +164,20 @@ async def health():
 
 @app.get("/graph/meetings/recent")
 async def recent_meetings(limit: int = 10):
-    return memgraph_client.get_recent_meetings(limit)
+    rows = memgraph_client.get_recent_meetings(limit)
+    return [{"meeting": _node_props("m", [r])[0], "attendees": r.get("attendees", [])} for r in rows]
 
 
 @app.get("/graph/person/{email}")
 async def person_meetings(email: str):
-    return memgraph_client.get_person_meetings(email)
+    rows = memgraph_client.get_person_meetings(email)
+    return [{"meeting": _node_props("m", [r])[0], "topics": r.get("topics", [])} for r in rows]
 
 
 @app.get("/graph/topic/{name}")
 async def topic_meetings(name: str):
-    return memgraph_client.get_topic_meetings(name)
+    rows = memgraph_client.get_topic_meetings(name)
+    return [{"meeting": _node_props("m", [r])[0], "topic": _node_props("t", [r])[0]} for r in rows]
 
 
 @app.get("/graph/actions/open")
@@ -191,6 +194,24 @@ async def trigger_process():
     return {"status": "done", "graph_counts": counts}
 
 
+def _node_props(record_key: str, rows: list) -> list:
+    """Extract node properties from neo4j query rows, serializing datetime objects."""
+    out = []
+    for row in rows:
+        node = row.get(record_key, row)
+        props = dict(node) if hasattr(node, "items") else node
+        cleaned = {}
+        for k, v in props.items():
+            if hasattr(v, "isoformat"):
+                cleaned[k] = v.isoformat()
+            elif hasattr(v, "_DateTime__date"):
+                cleaned[k] = str(v)
+            else:
+                cleaned[k] = v
+        out.append(cleaned)
+    return out
+
+
 @app.get("/graph/digest/weekly")
 async def weekly_digest(days: int = 30):
     data = memgraph_client.get_weekly_digest_data(days=days)
@@ -200,10 +221,10 @@ async def weekly_digest(days: int = 30):
     actions_closed = data.get("actions_closed", [])
     top_topics = data.get("top_topics", [])
     return {
-        "period": "last 7 days",
+        "period": f"last {days} days",
         "meetings_count": len(meetings),
-        "meetings": [m.get("m", m) for m in meetings],
-        "decisions_made": [d.get("d", d) for d in decisions],
+        "meetings": _node_props("m", meetings),
+        "decisions_made": _node_props("d", decisions),
         "action_items_created": len(actions_created),
         "action_items_completed": len(actions_closed),
         "top_topics": [{"topic": t.get("name"), "mentions": t.get("freq")} for t in top_topics],
